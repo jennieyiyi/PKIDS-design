@@ -1,6 +1,4 @@
-library(dlm)
 log_main<-function(R){
-  # area under curve
   AUC <- function(phi, mu1, mu2, d, m, tau){
     T = m*tau
     res_0 = exp(phi)*d/m/(exp(mu2+phi)-exp(mu1))
@@ -9,16 +7,12 @@ log_main<-function(R){
     res = res_0*(res_1-res_2)
     return(res)
   }
-  
-  # gumbel model
   Gp <- function(a, b, alpha0, alpha1, alpha2, beta0, beta1, gamma, auc){
     pe = 1/(1+exp(-alpha0-alpha1*ifelse(auc<=alpha2, auc, alpha2)))
     pt = 1/(1+exp(-beta0-beta1*auc))
     res = pe^a*(1-pe)^(1-a)*pt^b*(1-pt)^(1-b)+(-1)^(a+b)*pe*(1-pe)*pt*(1-pt)*(exp(gamma)-1)/(exp(gamma)+1)
     return(res)
   }
-  
-  # concentration
   ft <- function(t, phi, psi, delta, d, m, tau){
     res_0 = exp(phi)*d/m/(exp(delta+phi)-exp(psi))
     res_1 = exp(-exp(psi-delta)*t)/(1-exp(-exp(psi-delta)*tau))
@@ -26,12 +20,8 @@ log_main<-function(R){
     res = res_0*(res_1-res_2)
     return(res)
   }
-  
   mcmc.arms <- function(dat, alpha0.hat, beta0.hat){
     tt=c(1,7,16,24,34,48)
-    # initial values for the parameters appear in the model
-    # phi, psi, delta, alpha0, alpha1, alpha2, beta0, beta1,  mu1, mu2, gamma, sigma2, sigma12, sigma22
-    # dat = list(z, yt, ye, d, m, tau)
     z = dat[,1:6]
     ye = dat[,7]
     yt = dat[,8]
@@ -39,21 +29,12 @@ log_main<-function(R){
     m = dat[,10]
     tau = dat[,11]
     n = length(yt)
-    # MCMC with GIBBS Sampling 
     N.post <- 4000
     N.burnin <- N.post/2
-    
-    # collect the gibbs sampling
     phi_t = alpha0_t = alpha1_t = alpha2_t = beta0_t = beta1_t = mu1_t = mu2_t = gamma_t = sigma2_t = sigma12_t = sigma22_t = numeric(N.post)
-    # psi_t = delta_t = matrix(0, nrow = N.post, ncol = n) # no need to collect
-    
-    ######### full likelihood ########
-    
-    # likelihood for the PK model
     log_lik <- function(z, d, m, tau, phi, psi, delta, mu1, mu2, sigma2, sigma12, sigma22){
       n <- dim(z)[1]
-      # t is known and fixed for each patient
-      tt=c(1,7,16,24,34,48)
+      tt=c(1,7,16,24,48,96)
       s = 0
       for(i in 1:n){
         mu <- log(ft(tt, phi, psi[i], delta[i], d[i], m[i], tau[i]))
@@ -64,56 +45,37 @@ log_main<-function(R){
     }
     log_lik_psi_delta <- function(z, d, m, tau, phi, psi, delta, sigma2){
       tt=c(1,7,16,24,34,48)
-      # t is known and fixed for each patient
       mu <- log(ft(tt, phi, psi, delta, d, m, tau))
-      res = max(sum(-(z-mu)^2/2/sigma2), log(.Machine$double.xmin)+10)
-      #sum(dnorm(z, mean = mu, sd = sqrt(sigma2), log = T))
+      res = max(sum(-(z-mu)^2/2/sigma2), log(Machine$double.xmin)+10)
       return(res)
     }
-    ##### the first stage: estimate the AUC ####
-    # initial values for the parameters
     mu1 = log(0.1);  mu2 = log(10)
     phi = 0; psi = rep(mu1, n);  delta = rep(mu2, n);   sigma2 = sigma12 =  sigma22 = 1
     mu.phi = 0
     sigma2.phi = 1
-    # gibbs sampling
     for(ite in 1:N.post){
-      ###### parameters appear in PK model: phi, psi, delta, mu1, mu2, sigma2, sigma12, sigma22######
-      # phi
-      lmin = max(psi-delta)
+      1min = max(psi-delta)
       log.post <- function(x) log_lik(z, d, m, tau, x, psi, delta, mu1, mu2, sigma2, sigma12, sigma22) -(x-mu.phi)^2/2/sigma2.phi #+ log(dtruncnorm(x, a = lmin, mean = mu.phi, sd = sqrt(sigma2.phi)))
       phi = arms(phi, log.post, function(x) ((x>lmin)*(x<5)), 1)
       phi_t[ite] = phi
-      
-      # psi: is a vector
       u_psi=phi+min(delta)
       for(i in 1:n){
         u_psi=phi+delta[i]
         log.post <- function(x) log_lik_psi_delta(z[i,], d[i], m[i], tau[i], phi, x, delta[i], sigma2)-(x-mu1)^2/2/sigma12
         psi[i] = arms(psi[i], log.post, function(x) ((x>-10)*(x<u_psi)), 1)
-        # psi_t[ite, i] = psi[i]
       }
-      
-      # delta 
       for(i in 1:n){
         log.post <- function(x) log_lik_psi_delta(z[i,], d[i], m[i], tau[i], phi, psi[i], x, sigma2)-(x-mu2)^2/2/sigma22
         delta[i] = arms(delta[i], log.post, function(x) (x>(psi[i]-phi))*(x<10), 1)
-        # delta_t[ite,i] = delta[i]
       }
-      
-      # mu1
       mean = sum(psi)*1000/(n*1000+sigma12)
       sd = sqrt(1000*sigma12/(n*1000+sigma12))
       mu1 = rnorm(1, mean = mean, sd =sd)
       mu1_t[ite] = mu1
-      
-      # mu2
       mean = sum(delta)*1000/(n*1000+sigma22)
       sd = sqrt(1000*sigma22/(n*1000+sigma22))
       mu2 = rnorm(1, mean = mean, sd =sd)
       mu2_t[ite] = mu2
-      
-      # sigma2
       L = dim(z)[2]
       shape = n*L/2+0.001
       s = 0
@@ -124,14 +86,10 @@ log_main<-function(R){
       scale = 0.001+ s/2
       sigma2 = 1/rgamma(1, shape, rate = 1/scale)
       sigma2_t[ite] = sigma2
-      
-      # sigma12
       shape = n/2+0.001
       scale = sum((psi-mu1)^2)/2+0.001
       sigma12 = 1/rgamma(1, shape, rate = 1/scale)
       sigma12_t[ite] = sigma12
-      
-      # sigma22
       shape = n/2+0.001
       scale = sum((delta-mu2)^2)/2+0.001
       sigma22 = 1/rgamma(1, shape, rate = 1/scale)
@@ -150,8 +108,6 @@ log_main<-function(R){
     for(i in 1:n){
       s.auc[i] <- ifelse(sd.auc==0, auc[i]-m.auc+rnorm(1, sd=0.01), (auc[i]-m.auc)/2/sd.auc)
     }
-    #####  the second stage ####  
-    # log likelihood for parameters appear in toxicity and efficacy models
     log_lik <- function(z, yt, ye, auc, alpha0, alpha1, alpha2, beta0, beta1, gamma){
       n <- length(yt)
       pi_00 = Gp(0, 0, alpha0, alpha1, alpha2, beta0, beta1, gamma, auc)
@@ -162,58 +118,39 @@ log_main<-function(R){
       res = log_ytye
       return(res)
     }
-    # estimate the parameters appear in toxicity and efficacy models
-    # gibbs sampling
-    # initial values for the parameters appear in toxicity and efficacy models
-    alpha0 = beta0 = -5
+    alpha0 = beta0 = 5
     alpha1 = beta1 = 0.1
     alpha2 = 0
     gamma = 1
     mu.alpha1 = mu.beta1 = 0
-    sigma2.alpha1 = sigma2.beta1 = 2.5^2
+    sigma2.alpha1 = sigma2.beta1 = 25^2
     for(ite in 1:N.post){
-      ###### parameters appear in toxicity model: alpha0, alpha1, alpha2 ####
-      # efficacy
-      # alpha0
       log.post <- function(x) log_lik(z, yt, ye, s.auc, x, alpha1, alpha2, beta0, beta1, gamma) - (x-alpha0.hat)^2/2/alpha0.hat^2
       alpha0 = arms(alpha0, log.post, function(x) ((x>-10)*(x<10)), 1)
       alpha0_t[ite] = alpha0
-      
-      # alpha1
       log.post <- function(x) log_lik(z, yt, ye, s.auc, alpha0, x, alpha2, beta0, beta1, gamma) - (x-mu.alpha1)^2/2/sigma2.alpha1
       alpha1 = arms(alpha1, log.post, function(x) ((x>0)*(x<6)), 1)
       alpha1_t[ite] = alpha1
-      
-      # alpha2
       log.post <- function(x) log_lik(z, yt, ye, s.auc, alpha0, alpha1, x, beta0, beta1, gamma)
       alpha2 = arms(alpha2, log.post, function(x) ((x>-2)*(x<2)), 1)
       alpha2_t[ite] = alpha2
-      
-      # toxicity
-      # beta0
       log.post <- function(x) log_lik(z, yt, ye, s.auc, alpha0, alpha1, alpha2, x, beta1, gamma) - (x-beta0.hat)^2/2/beta0.hat^2
       beta0 = arms(beta0, log.post, function(x) ((x>-10)*(x<10)), 1)
       beta0_t[ite] = beta0
-      
-      # beta1
       log.post <- function(x) log_lik(z, yt, ye, s.auc, alpha0, alpha1, alpha2, beta0, x, gamma) - (x-mu.beta1)^2/2/sigma2.beta1
       beta1 = arms(beta1, log.post, function(x) ((x>0)*(x<6)), 1)
       beta1_t[ite] = beta1
-      
-      # gamma
-      log.post <- function(x) log_lik(z, yt, ye, s.auc, alpha0, alpha1, alpha2, beta0, beta1, x) # unif(0, 2)
+      log.post <- function(x) log_lik(z, yt, ye, s.auc, alpha0, alpha1, alpha2, beta0, beta1, x) 
       gamma = arms(gamma, log.post, function(x) ((x>0)*(x<2)), 1)
       gamma_t[ite] = gamma
     }
     matrix.post = cbind(alpha0_t, alpha1_t, alpha2_t, beta0_t, beta1_t, gamma_t, phi, mu1, mu2, m.auc, sd.auc)[ind,]
     return(matrix.post)
   }
-  
-  ######produce data
   generate.outcome <- function(d, s, sigma2, phi, mu1, mu2, sigma12, sigma22, alpha0, alpha1, alpha2, beta0, beta1, gamma = 0, cohortsize){
     m = s[1]
     tau = s[2]
-    z <- NULL # in fact it corresponding to the log z of the manuscript 
+    z <- NULL 
     tt <- c(1,7,16,24,34,48)
     lt <- length(tt)
     psi = rnorm(cohortsize, mu1, sd = sqrt(sigma12))
@@ -240,15 +177,12 @@ log_main<-function(R){
     dat = cbind(z, y, d, m, tau)
     return(dat)
   }
-  
   tox.prob <- function(vbeta, s.auc) {
-    # return toxicity rate
     beta0 = vbeta[1]
     beta1 = vbeta[2]
     p_t <- 1/(1+exp(-beta0-beta1*s.auc))
     return(p_t)
-  }
-  
+  }  
   eff.prob <- function(valpha, s.auc) {
     alpha0 = valpha[1]
     alpha1 = valpha[2]
@@ -256,9 +190,8 @@ log_main<-function(R){
     p_e <- 1/(1+exp(-alpha0-alpha1*ifelse(s.auc<=alpha2, s.auc, alpha2)))
     return(p_e)
   }
-  
   get.utility <- function(vparam, s.auc){
-    Uti <- rbind(c(0, 40), # (ye = 0, yt =1), (ye = 0, yt =0)
+    Uti <- rbind(c(0, 40),
                  c(75, 100)) 
     alpha0 = vparam[1]
     alpha1 = vparam[2]
@@ -277,24 +210,19 @@ log_main<-function(R){
     uti <- sum(Uti*prob)
     return(uti)
   }
-  
   summary.mcmc <- function(vparam.post, d, s, phi.T, phi.E){
     n.dose = length(d)
     alpha.post = vparam.post[,1:3]
     beta.post = vparam.post[,4:5]
     gamma.post = vparam.post[,6]
-    
     vp.temp <- apply(vparam.post, 2, mean)
     valpha <- vp.temp[1:3]
     vbeta <- vp.temp[4:5]
-    
-    phi = vp.temp[7]
-    mu1 = vp.temp[8]
-    mu2 = vp.temp[9]
-    
-    m.auc = vp.temp[10]
-    sd.auc = vp.temp[11]
-    
+    phi = vp.temp[6]
+    mu1 = vp.temp[7]
+    mu2 = vp.temp[8]
+    m.auc = vp.temp[9]
+    sd.auc = vp.temp[10]
     tox.mcmc = eff.mcmc = uti = s.auc = matrix(rep(0, n.dose*n.s), nrow = n.s, ncol = n.dose)
     for(k in 1:n.s){
       for(j in 1:n.dose){
@@ -309,7 +237,6 @@ log_main<-function(R){
     }
     list(tox=tox.mcmc, eff=eff.mcmc, uti=uti, s.auc = s.auc)
   }
-  
   d = c(80, 200, 400,600, 900)
   s = matrix(c(7, 96, 14, 48), ncol = 2, byrow = T)
   n.d = length(d)
@@ -319,7 +246,6 @@ log_main<-function(R){
   n.cohortsize = 20
   phi.T = phi.E = 0.3
   C_T = C_E = 0.05
-  ####### Scenarios ##########
   # true values for each parameter
   phi = 0 
   sigma2 = 1
@@ -330,20 +256,16 @@ log_main<-function(R){
   n.sce = 1
   res = array(0, dim = c(n.s,n.d,2,n.sce))
   for(isc in 1:n.sce){
-    {## scenarios: example ##
-       if(isc==1){ ## (1, 1) & (2, 1)
+    {
+       if(isc==1){
          alpha0 = -0.15; alpha1 = 1.75*1e-3; alpha2 = 200
          beta0 = -1.5;  beta1 = 2.8*1e-3
          gamma = 0.5
        }
     }
-    
     pt.min = pe.min = 0.01
     alpha0.hat = beta0.hat = log(pt.min/(1-pt.min))
-    
-    #########main loop ########  
     pd = ds = matrix(0, nrow = n.s, ncol = n.d) 
-    # pd: collect the number of patients allocated to each dose; ds: collect the determined obd 
     tstart<-Sys.time()
     for(itrial in 1:n.trial){
       h.dose = dose.ind <- NULL
@@ -366,7 +288,7 @@ log_main<-function(R){
       for(k in 1:n.s){
         if(tox.summ[k, h.dose[k]]>0.5&h.dose[k]<n.d) C_H = c(C_H, k)
       }
-      if(!is.null(C_H)){
+      if(is.null(C_H)){
         h.temp = h.dose[C_H]+1
         uti_temp = NULL
         for(i in 1:length(h.temp)){
@@ -376,9 +298,9 @@ log_main<-function(R){
         comb_id = which(as.numeric(rmultinom(1, 1, prob))==1)
         h.dose[C_H[comb_id]] = h.dose[C_H[comb_id]] + 1
         dose.ind = c(C_H[comb_id], h.dose[C_H[comb_id]])
-      }else{ # determine the adimissible dose-schedule set
+      }else{ 
         capA.ind <- which((tox.summ>C_T)&(eff.summ>C_E), arr.ind = T)
-        if(dim(capA.ind)[1]>0){ # capA.ind is not empty
+        if(dim(capA.ind)[1]>0){ 
           s_temp = capA.ind[,1]
           d_temp = capA.ind[,2]
           uti_temp = NULL
@@ -414,7 +336,6 @@ log_main<-function(R){
         tox.summ <- summ.temp$tox
         eff.summ <- summ.temp$eff
         uti <- summ.temp$uti
-        # determine H
         C_H = NULL
         for(k in 1:n.s){
           if(tox.summ[k, h.dose[k]]>0.5&h.dose[k]<n.d) C_H = c(C_H, k)
@@ -429,16 +350,16 @@ log_main<-function(R){
           comb_id = which(as.numeric(rmultinom(1, 1, prob))==1)
           h.dose[C_H[comb_id]] = h.dose[C_H[comb_id]] + 1
           dose.ind = c(C_H[comb_id], h.dose[C_H[comb_id]])
-        }else{ # determine the admissible dose-schedule set
+        }else{ 
           capA.ind <- which((tox.summ>C_T)&(eff.summ>C_E), arr.ind = T)
-          if(dim(capA.ind)[1]>0){ # capA.ind is not empty
+          if(dim(capA.ind)[1]>0){ 
             s_temp = capA.ind[,1]
             d_temp = capA.ind[,2]
             uti_temp = NULL
             for(i in 1:length(s_temp)){
               uti_temp[i] = uti[s_temp[i], d_temp[i]]
             }
-            if(ich==n.cohortsize){ # reached the maximum sample size
+            if(ich==n.cohortsize){ 
               id=which.max(uti_temp)
               ind_temp = NULL
               for(i in 1:length(id)){
@@ -472,8 +393,8 @@ log_main<-function(R){
       }
       t.consume <- difftime(Sys.time(), tstart, units = "mins")
     }
-    res[,,1,isc] = pd
-    res[,,2,isc] = ds
+    res[,1,isc] = pd
+    res[,2,isc] = ds
   }
   list(res)
 }
